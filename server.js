@@ -28,20 +28,30 @@ app.use((req, res, next) => {
 });
 
 const CONFIG = {
-  GHL_API_KEY:         process.env.GHL_API_KEY          || '',
-  GHL_LOCATION_ID:     process.env.GHL_LOCATION_ID      || '',
-  TRUSTEDFORM_API_KEY: process.env.TRUSTEDFORM_API_KEY  || '',
-  PORT:                process.env.PORT                 || 3000,
-  LOG_FILE:            path.join(__dirname, 'leads.log'),
-  GHL_CONTACTS_URL:    'https://services.leadconnectorhq.com/contacts/',
+  GHL_API_KEY:            process.env.GHL_API_KEY          || '',
+  GHL_LOCATION_ID:        process.env.GHL_LOCATION_ID      || '',
+  TRUSTEDFORM_API_KEY:    process.env.TRUSTEDFORM_API_KEY  || '',
+  PORT:                   process.env.PORT                 || 3000,
+  LOG_FILE:               path.join(__dirname, 'leads.log'),
+  GHL_CONTACTS_URL:       'https://services.leadconnectorhq.com/contacts/',
+  GHL_OPPORTUNITIES_URL:  'https://services.leadconnectorhq.com/opportunities/',
+  PIPELINE_ID:            'H6KGWf7FSl49I4gXBVlw',
 };
 
-// Pipeline stage mapping
+// Pipeline stage name mapping (for custom field / display)
 const PIPELINE_STAGE = {
   medicare: 'Medicare Lead - New',
   life:     'Life Insurance Lead - New',
   both:     'Medicare + Life Lead - New',
   unsure:   'Unqualified - Needs Review',
+};
+
+// Pipeline stage ID mapping (for Opportunities API)
+const PIPELINE_STAGE_ID = {
+  medicare: 'e9970b45-5904-45ea-9678-e11344dca803',
+  life:     '5f4a59fe-4349-498b-89d6-6974980b0e37',
+  both:     'eaf07843-9821-46af-b7e3-b071443f7b1b',
+  unsure:   '491d2c01-b187-4920-92e1-d74019668d5e',
 };
 
 function validateLead(body) {
@@ -116,6 +126,50 @@ async function sendToGHL(lead) {
   }
 }
 
+async function createGHLOpportunity(lead, contactId) {
+  if (!CONFIG.GHL_API_KEY || !CONFIG.GHL_LOCATION_ID) {
+    console.warn('[opp] GHL credentials not set — skipping opportunity');
+    return { success: false, reason: 'GHL credentials not configured' };
+  }
+
+  const stageId = PIPELINE_STAGE_ID[lead.interest] || PIPELINE_STAGE_ID.unsure;
+  const stageName = PIPELINE_STAGE[lead.interest] || 'Unqualified - Needs Review';
+
+  const payload = {
+    pipelineId:      CONFIG.PIPELINE_ID,
+    locationId:      CONFIG.GHL_LOCATION_ID,
+    name:            `${lead.firstName} — ${stageName}`,
+    pipelineStageId: stageId,
+    status:          'open',
+    contactId:       contactId,
+    monetaryValue:   0,
+    source:          'Website Lead Form',
+  };
+
+  try {
+    const res = await fetch(CONFIG.GHL_OPPORTUNITIES_URL, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${CONFIG.GHL_API_KEY}`,
+        'Version':       '2021-07-28',
+      },
+      body:    JSON.stringify(payload),
+      timeout: 8000,
+    });
+    const respBody = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error(`[opp] HTTP ${res.status}:`, JSON.stringify(respBody).slice(0, 300));
+    } else {
+      console.log(`[opp] Opportunity created — id: ${respBody.opportunity?.id || 'unknown'}, stage: ${stageName}`);
+    }
+    return { success: res.ok, status: res.status, opportunityId: respBody.opportunity?.id };
+  } catch (err) {
+    console.error('[opp] fetch error:', err.message);
+    return { success: false, reason: err.message };
+  }
+}
+
 // ── POST /api/lead — main lead intake endpoint ──
 app.post('/api/lead', async (req, res) => {
   const lead = {
@@ -143,6 +197,12 @@ app.post('/api/lead', async (req, res) => {
   // Fire-and-forget to GHL — don't block the browser response
   sendToGHL(lead).then(result => {
     logLead({ id: lead.email + '_' + lead.timestamp, ghlResult: result }, 'ghl_submitted');
+    // Create opportunity in pipeline if contact was created successfully
+    if (result.success && result.contactId) {
+      createGHLOpportunity(lead, result.contactId).then(oppResult => {
+        logLead({ id: lead.email + '_' + lead.timestamp, oppResult }, 'opp_submitted');
+      });
+    }
   });
 
   res.json({
@@ -157,7 +217,7 @@ app.get('/api/health', (req, res) => {
     status:        'ok',
     timestamp:     new Date().toISOString(),
     ghlConfigured: !!(CONFIG.GHL_API_KEY && CONFIG.GHL_LOCATION_ID),
-    version:       '1.1.0',
+    version:       '1.2.0',
   });
 });
 
@@ -181,7 +241,7 @@ app.get('/api/leads/recent', (req, res) => {
 });
 
 app.listen(CONFIG.PORT, () => {
-  console.log(`[server] Willis Advocacy Group lead server v1.1.0 on port ${CONFIG.PORT}`);
+  console.log(`[server] Willis Advocacy Group lead server v1.2.0 on port ${CONFIG.PORT}`);
   console.log(`[server] GHL API: ${CONFIG.GHL_API_KEY ? 'CONFIGURED ✓' : '✗ NOT SET — add GHL_API_KEY to .env'}`);
   console.log(`[server] GHL Location: ${CONFIG.GHL_LOCATION_ID ? CONFIG.GHL_LOCATION_ID + ' ✓' : '✗ NOT SET'}`);
 });
