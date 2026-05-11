@@ -1,5 +1,5 @@
-// Willis Advocacy Group — Lead Capture Webhook Server
-// Receives leads from website form, validates, sends to GoHighLevel, logs locally
+// Willis Advocacy Group — Lead Capture Webhook Server v1.3.0
+// Receives leads from website form, validates, sends to GoHighLevel, retains TrustedForm certs, logs locally
 
 require('dotenv').config();
 const express = require('express');
@@ -126,6 +126,41 @@ async function sendToGHL(lead) {
   }
 }
 
+async function retainTrustedFormCert(certUrl) {
+  if (!CONFIG.TRUSTEDFORM_API_KEY || !certUrl) {
+    console.warn('[tf] TrustedForm API key or cert URL missing — skipping retain');
+    return { success: false, reason: 'missing key or cert URL' };
+  }
+
+  // Extract cert token from URL: https://cert.trustedform.com/<token>
+  const token = certUrl.split('/').pop().split('?')[0];
+  if (!token) return { success: false, reason: 'could not parse cert token' };
+
+  const auth = Buffer.from(':' + CONFIG.TRUSTEDFORM_API_KEY).toString('base64');
+
+  try {
+    const res = await fetch(`https://api.trustedform.com/truste_form.json`, {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Basic ${auth}`,
+      },
+      body:    JSON.stringify({ cert_url: certUrl }),
+      timeout: 8000,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error(`[tf] retain HTTP ${res.status}:`, JSON.stringify(body).slice(0, 200));
+    } else {
+      console.log(`[tf] Cert retained — token: ${token}`);
+    }
+    return { success: res.ok, status: res.status, token };
+  } catch (err) {
+    console.error('[tf] retain error:', err.message);
+    return { success: false, reason: err.message };
+  }
+}
+
 async function createGHLOpportunity(lead, contactId) {
   if (!CONFIG.GHL_API_KEY || !CONFIG.GHL_LOCATION_ID) {
     console.warn('[opp] GHL credentials not set — skipping opportunity');
@@ -205,6 +240,13 @@ app.post('/api/lead', async (req, res) => {
     }
   });
 
+  // Retain TrustedForm cert independently (TCPA evidence)
+  if (lead.trustedFormCertUrl) {
+    retainTrustedFormCert(lead.trustedFormCertUrl).then(tfResult => {
+      logLead({ id: lead.email + '_' + lead.timestamp, tfResult }, 'tf_retained');
+    });
+  }
+
   res.json({
     success: true,
     message: `Thank you ${lead.firstName}! Uhia will contact you within 1 business hour.`,
@@ -217,7 +259,7 @@ app.get('/api/health', (req, res) => {
     status:        'ok',
     timestamp:     new Date().toISOString(),
     ghlConfigured: !!(CONFIG.GHL_API_KEY && CONFIG.GHL_LOCATION_ID),
-    version:       '1.2.0',
+    version:       '1.3.0',
   });
 });
 
@@ -241,7 +283,8 @@ app.get('/api/leads/recent', (req, res) => {
 });
 
 app.listen(CONFIG.PORT, () => {
-  console.log(`[server] Willis Advocacy Group lead server v1.2.0 on port ${CONFIG.PORT}`);
+  console.log(`[server] Willis Advocacy Group lead server v1.3.0 on port ${CONFIG.PORT}`);
   console.log(`[server] GHL API: ${CONFIG.GHL_API_KEY ? 'CONFIGURED ✓' : '✗ NOT SET — add GHL_API_KEY to .env'}`);
   console.log(`[server] GHL Location: ${CONFIG.GHL_LOCATION_ID ? CONFIG.GHL_LOCATION_ID + ' ✓' : '✗ NOT SET'}`);
+  console.log(`[server] TrustedForm: ${CONFIG.TRUSTEDFORM_API_KEY ? 'CONFIGURED ✓' : '✗ NOT SET — add TRUSTEDFORM_API_KEY to .env'}`);
 });
