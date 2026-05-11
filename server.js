@@ -249,7 +249,7 @@ app.post('/api/lead', async (req, res) => {
 
   res.json({
     success: true,
-    message: `Thank you ${lead.firstName}! Uhia will contact you within 1 business hour.`,
+    message: `Thank you ${lead.firstName}! Uhia will call you personally within 1 business hour. Zero cost, zero pressure — People Over Profits. | Willis Advocacy Group | (774) 446-0701`,
   });
 });
 
