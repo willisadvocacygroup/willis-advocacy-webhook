@@ -153,7 +153,10 @@ async function sendToGHL(lead) {
     return { success: false, reason: 'GHL credentials not configured' };
   }
 
-  const tags = ['website-lead', lead.state, lead.interest].filter(Boolean);
+  const baseTags = ['website-lead', lead.state, lead.interest].filter(Boolean);
+  // "both" leads need medicare + life tags so both nurture sequences fire
+  const extraTags = lead.interest === 'both' ? ['medicare', 'life'] : [];
+  const tags = [...new Set([...baseTags, ...extraTags])];
 
   const payload = {
     firstName:   lead.firstName,
