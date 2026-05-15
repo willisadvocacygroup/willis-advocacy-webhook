@@ -566,7 +566,7 @@ app.get('/api/health', (req, res) => {
     timestamp:        new Date().toISOString(),
     ghlConfigured:    !!(CONFIG.GHL_API_KEY && CONFIG.GHL_LOCATION_ID),
     emailConfigured:  !!(CONFIG.SMTP_USER && CONFIG.SMTP_PASS),
-    version:          '1.4.1',
+    version:          '1.4.2',
   });
 });
 
